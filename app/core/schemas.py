@@ -17,9 +17,9 @@ class CycleDescription(BaseModel):
 
 class AnalyzePromptResponse(BaseModel):
     """Response schema for prompt analysis."""
-    consistency_score: float = Field(..., description="Overall consistency score from 0 to 10")
+    consistency_score: float = Field(..., description="Overall consistency score from 0 to 10, 0 means inconsistent")
     claims: List[str] = Field(..., description="List of extracted claims from the prompt")
-    cycles: List[List[int]] = Field(..., description="List of detected cycles")
+    cycles: List[List[int]] = Field(..., description="List of detected inconsistency cycles")
     inconsistent_pairs: List[CycleDescription] = Field(..., description="Descriptions of inconsistent cycles")
     visualization_url: Optional[str] = Field(None, description="URL to the generated visualization")
     error: Optional[str] = Field(None, description="Error message if analysis failed")

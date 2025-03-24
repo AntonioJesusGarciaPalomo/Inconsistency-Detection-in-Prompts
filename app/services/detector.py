@@ -82,6 +82,7 @@ class InconsistencyDetector:
                 "error": "Could not extract any claims from the prompt",
                 "consistency_score": None,
                 "claims": [],
+                "cycles": [],
                 "inconsistent_pairs": []
             }
         
