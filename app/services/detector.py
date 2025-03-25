@@ -74,44 +74,57 @@ class InconsistencyDetector:
     
     async def analyze_prompt(self, prompt: str, generate_visualization: bool = False) -> Dict[str, Any]:
         """Analyze a prompt for inconsistencies and return the results."""
-        # Extract claims from the prompt
-        claims = await self.extract_claims(prompt)
-        
-        if not claims:
+        try:
+            # Usar directamente analyze_text del SheafAnalyzer que ya incluye todo el flujo
+            analysis_result = self.sheaf_analyzer.analyze_text(prompt)
+            
+            # Si no se han extraído afirmaciones, hacerlo con la API de OpenAI
+            if not analysis_result['claims']:
+                claims = await self.extract_claims(prompt)
+                if claims:
+                    # Volver a analizar con las afirmaciones extraídas
+                    analysis_result = self.sheaf_analyzer.analyze_text("\n".join(claims))
+            
+            # Formatear resultados
+            result = {
+                "consistency_score": analysis_result.get('consistency_score', 10.0),
+                "claims": analysis_result.get('claims', []),
+                "cycles": analysis_result.get('cycles', []),
+                "inconsistent_pairs": []
+            }
+            
+            # Crear descripciones significativas de las inconsistencias
+            cycles = analysis_result.get('cycles', [])
+            claims = analysis_result.get('claims', [])
+            
+            for cycle in cycles:
+                cycle_claims = [claims[i] for i in cycle]
+                cycle_description = " → ".join(cycle_claims) + " → " + cycle_claims[0]
+                result["inconsistent_pairs"].append({
+                    "cycle": cycle,
+                    "description": cycle_description
+                })
+            
+            # Agregar también pares inconsistentes directos
+            inconsistent_pairs = analysis_result.get('inconsistent_pairs', [])
+            for i, j in inconsistent_pairs:
+                result["inconsistent_pairs"].append({
+                    "pair": [i, j],
+                    "description": f"Contradicción directa entre '{claims[i]}' y '{claims[j]}'"
+                })
+            
+            # Añadir la visualización si se solicita
+            if generate_visualization:
+                result["visualization_url"] = analysis_result.get('visualization_path')
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing prompt: {str(e)}")
             return {
-                "error": "Could not extract any claims from the prompt",
+                "error": f"Error analyzing prompt: {str(e)}",
                 "consistency_score": None,
                 "claims": [],
                 "cycles": [],
                 "inconsistent_pairs": []
             }
-        
-        # Detect circular inconsistencies
-        cycles, _ = self.sheaf_analyzer.detect_circular_inconsistencies(claims)
-        
-        # Compute global consistency score
-        consistency_score = self.sheaf_analyzer.compute_global_consistency(claims, cycles)
-        
-        # Create meaningful descriptions of inconsistencies
-        inconsistent_pairs = []
-        for cycle in cycles:
-            cycle_claims = [claims[i] for i in cycle]
-            cycle_description = " → ".join(cycle_claims) + " → " + cycle_claims[0]
-            inconsistent_pairs.append({
-                "cycle": cycle,
-                "description": cycle_description
-            })
-        
-        result = {
-            "consistency_score": consistency_score,
-            "claims": claims,
-            "cycles": cycles,
-            "inconsistent_pairs": inconsistent_pairs
-        }
-        
-        # Generate visualization if requested
-        if generate_visualization:
-            vis_path = await self.generate_visualization(claims, cycles)
-            result["visualization_url"] = vis_path
-        
-        return result
