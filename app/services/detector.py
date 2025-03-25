@@ -174,6 +174,7 @@ class InconsistencyDetector:
         """Fallback method for inconsistency detection using pairwise evaluations."""
         # Create a graph to represent relationships
         G = nx.DiGraph()
+        self.g = G  # Store reference for later use
         
         # Add nodes for each claim
         for i, claim in enumerate(claims):
@@ -406,7 +407,8 @@ class InconsistencyDetector:
                     "consistency_score": 10.0,
                     "claims": [],
                     "cycles": [],
-                    "inconsistent_pairs": []
+                    "inconsistent_pairs": [],
+                    "pairwise_consistency": {}
                 }
             
             # Detect inconsistencies
@@ -427,8 +429,16 @@ class InconsistencyDetector:
                 "consistency_score": analysis_info.get("consistency_score", 10.0),
                 "claims": claims,
                 "cycles": cycles,
-                "inconsistent_pairs": []
+                "inconsistent_pairs": [],
+                "pairwise_consistency": {}  # New field for all pair scores
             }
+            
+            # Format pairwise consistency scores for the response
+            for (i, j), score in consistency_scores.items():
+                # Only include each pair once (with smaller index first)
+                if i < j:  # Avoid duplicates
+                    key = f"{i}-{j}"
+                    result["pairwise_consistency"][key] = round(score, 2)
             
             # Format inconsistent pairs
             for cycle in cycles:
@@ -443,7 +453,8 @@ class InconsistencyDetector:
             # Generate visualization if requested
             if generate_visualization:
                 vis_path = await self.visualize_inconsistencies(claims, cycles, consistency_scores)
-                result["visualization_url"] = vis_path
+                # Format with complete URL for easy copying
+                result["visualization_url"] = f"http://localhost:8000{vis_path}"
             
             return result
             
@@ -455,5 +466,6 @@ class InconsistencyDetector:
                 "claims": [],
                 "cycles": [],
                 "inconsistent_pairs": [],
+                "pairwise_consistency": {},
                 "error": f"Error analyzing prompt: {str(e)}"
             }

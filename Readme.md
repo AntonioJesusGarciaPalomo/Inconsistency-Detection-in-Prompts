@@ -1,17 +1,24 @@
 # Inconsistency Detection API
 
-This service detects logical inconsistencies in prompts by combining Azure OpenAI's language models with sheaf theory from computational topology.
+This service detects logical inconsistencies in text prompts using advanced language models to identify contradictions, circular logic, and other logical flaws.
 
 ## Overview
 
 The API analyzes text prompts to:
 
-1. Extract individual claims
-2. Assess pairwise logical consistency between claims
-3. Build a mathematical sheaf structure to detect global inconsistencies
-4. Identify circular logic and contradictions that might not be evident in isolated claim pairs
+1. Extract individual claims using language model capabilities
+2. Assess logical relationships and consistency between claims
+3. Detect circular inconsistencies and contradictory patterns
+4. Generate visualizations of claim relationships with consistency scores
 
 Based on the research paper: "Prospects for inconsistency detection using large language models and sheaves" by Steve Huntsman, Michael Robinson, and Ludmilla Huntsman.
+
+## Key Features
+
+- **LLM-Driven Analysis**: Uses GPT models to understand semantic relationships without relying on rigid pattern matching
+- **Comprehensive Consistency Evaluation**: Evaluates both direct and transitive inconsistencies
+- **Interactive Visualizations**: Generates color-coded graphs showing relationships and inconsistency cycles
+- **Detailed Scoring**: Provides numerical consistency scores for all claim pairs
 
 ## Project Structure
 
@@ -28,11 +35,11 @@ inconsistency-detector/
 │   │   └── schemas.py        # Pydantic models
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── openai_service.py # Azure OpenAI integration
+│   │   ├── openai_service.py # Language model integration
 │   │   └── detector.py       # Inconsistency detection logic
 │   └── utils/
 │       ├── __init__.py
-│       └── sheaf.py          # Sheaf theory utilities
+│       └── sheaf.py          # Graph analysis utilities
 ├── tests/
 │   ├── __init__.py
 │   ├── test_api.py
@@ -75,13 +82,19 @@ inconsistency-detector/
    cp .env.example .env
    ```
 
-   Edit `.env` with your Azure OpenAI credentials:
+   Edit `.env` with your Azure OpenAI or OpenAI credentials:
 
    ```
    AZURE_OPENAI_API_KEY=your-key-here
    AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
    AZURE_OPENAI_API_VERSION=2023-05-15
    AZURE_OPENAI_DEPLOYMENT=your-deployment-name
+   ```
+
+   Or for standard OpenAI:
+
+   ```
+   OPENAI_API_KEY=your-key-here
    ```
 
 5. **Run the application**
@@ -109,30 +122,52 @@ Response:
 
 ```json
 {
-    "global_consistency_score": 4.5,
+    "consistency_score": 4.5,
     "claims": [
         "Claim 1 extracted from the prompt",
         "Claim 2 extracted from the prompt"
     ],
-    "pairwise_consistency": {
-        "0-1": 7.5
-    },
+    "cycles": [
+        [0, 1, 2]
+    ],
     "inconsistent_pairs": [
         {
-            "claim1_index": 2,
-            "claim2_index": 5,
-            "claim1_text": "Text of claim at index 2",
-            "claim2_text": "Text of claim at index 5",
-            "consistency_score": 2.5
+            "cycle": [0, 1, 2],
+            "description": "Claim 1 → Claim 2 → Claim 3 → Claim 1"
         }
     ],
-    "visualization_url": "http://server/visualizations/12345.png"
+    "pairwise_consistency": {
+        "0-1": 8.5,
+        "0-2": 3.2,
+        "1-2": 7.0
+    },
+    "visualization_url": "http://localhost:8000/visualizations/12345.png"
 }
 ```
 
-## Example
+### Response Fields
 
-Testing the circular logic example:
+- **consistency_score**: Overall consistency rating from 0-10 (0=inconsistent, 10=consistent)
+- **claims**: List of individual claims extracted from the prompt
+- **cycles**: Lists of claim indices that form inconsistency cycles
+- **inconsistent_pairs**: Detailed descriptions of detected inconsistencies
+- **pairwise_consistency**: Consistency scores for each analyzed claim pair
+- **visualization_url**: Complete URL to the generated visualization image
+
+## Examples
+
+### Simple Contradiction Example
+
+```bash
+curl -X POST http://localhost:8000/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "I am older than you and you are older than me",
+    "visualization": true
+  }'
+```
+
+### Circular Logic Example
 
 ```bash
 curl -X POST http://localhost:8000/api/analyze \
@@ -143,9 +178,25 @@ curl -X POST http://localhost:8000/api/analyze \
   }'
 ```
 
+## Visualization Features
+
+The API generates interactive visualizations showing:
+
+- **Green edges**: Consistent relationships (score ≥ 5/10)
+- **Orange edges**: Inconsistent relationships (score < 5/10)
+- **Red edges**: Inconsistency cycle edges
+- **Edge labels**: Numerical consistency scores (e.g., "7.5/10")
+
+## Implementation Details
+
+- **Language Model Integration**: Uses GPT-4o mini or similar models to evaluate logical consistency
+- **Advanced JSON Parsing**: Robust handling of LLM responses with error correction
+- **Graph-Based Analysis**: Uses NetworkX for graph construction and cycle detection
+- **Matplotlib Visualizations**: Generates clear, informative visualizations of claim relationships
+
 ## License
 
-[License information]
+MIT License
 
 ## References
 
