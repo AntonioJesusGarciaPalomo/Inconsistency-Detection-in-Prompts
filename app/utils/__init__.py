@@ -2,6 +2,6 @@
 Utility functions and classes.
 """
 
-from app.utils.sheaf import SheafAnalyzer
+from app.utils.graph_analyzer import GraphAnalyzer
 
-__all__ = ["SheafAnalyzer"]
+__all__ = ["GraphAnalyzer"]
