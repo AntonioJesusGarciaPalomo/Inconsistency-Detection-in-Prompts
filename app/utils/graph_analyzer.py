@@ -4,17 +4,13 @@ Uses NetworkX for graph representations and cycle detection.
 """
 import logging
 import networkx as nx
-import numpy as np
-import matplotlib.pyplot as plt
-import io
-import uuid
-import os
 import re
-import json
-from itertools import combinations
 from typing import List, Dict, Tuple, Any, Optional, Set, Union
+import matplotlib.pyplot as plt
+import os
+import uuid
+import numpy as np
 
-# Configure logger
 logger = logging.getLogger(__name__)
 
 class GraphAnalyzer:
@@ -30,6 +26,24 @@ class GraphAnalyzer:
             'cycles': {},         # Detected inconsistency cycles
             'analysis': {}        # Overall analysis of claim sets
         }
+        
+        # Define patterns for detecting comparative relationships
+        self.comparison_patterns = [
+            # Pattern group 1: Explicit comparisons with "than"
+            (r'(\b[\w\s]+\b)(?:\s+(?:is|are|was|were))?\s+(more|greater|higher|larger|stronger|faster|older|heavier)\s+than\s+(\b[\w\s]+\b)', 'greater_than'),
+            
+            # Pattern group 2: Implicit comparisons with "as...as"
+            (r'(\b[\w\s]+\b)\s+as\s+(?:\w+\s+)?as\s+(\b[\w\s]+\b)', 'equal_to'),
+            
+            # Pattern group 3: Verb-based comparisons
+            (r'(\b[\w\s]+\b)\s+(?:eats|runs|jumps|works|pays)\s+(?:much\s+)?more\s+than\s+(\b[\w\s]+\b)', 'action_greater'),
+            
+            # Pattern group 4: Negative comparisons
+            (r'(\b[\w\s]+\b)\s+(?:is|are)\s+not\s+as\s+(\w+)\s+as\s+(\b[\w\s]+\b)', 'not_as'),
+            
+            # Pattern group 5: Quantitative comparisons
+            (r'(\b[\w\s]+\b)\s+(?:has|have)\s+(\d+|\w+)\s+more\s+(\w+)\s+than\s+(\b[\w\s]+\b)', 'quantitative_more')
+        ]
     
     def detect_circular_inconsistencies(self, claims: List[str]) -> Tuple[List[List[int]], nx.DiGraph]:
         """
@@ -41,37 +55,30 @@ class GraphAnalyzer:
         Returns:
             Tuple of (inconsistency cycles, graph)
         """
-        if len(claims) <= 1:
-            return [], None
-        
-        # Create a directed graph
+        if len(claims) < 2:
+            return [], nx.DiGraph()
+
         G = nx.DiGraph()
+        entities, relationships = self.extract_entities_and_relationships(claims)
         
-        # Add nodes for each claim
-        for i, claim in enumerate(claims):
-            G.add_node(i, text=claim)
+        # Add nodes with metadata
+        for idx, claim in enumerate(claims):
+            G.add_node(idx, text=claim, entities=self._extract_claim_entities(claim))
         
-        # First, detect transitive inconsistencies
-        transitive_cycles = self.detect_transitive_inconsistencies(claims)
-        if transitive_cycles:
-            logger.info(f"Detected transitive inconsistency cycles: {transitive_cycles}")
-            
-            # Add these to the graph
-            for cycle in transitive_cycles:
-                for i in range(len(cycle)):
-                    from_idx = cycle[i]
-                    to_idx = cycle[(i+1) % len(cycle)]
-                    # Add direct edges between claims in the cycle
-                    G.add_edge(from_idx, to_idx, consistency=7.0, is_consistent=True)
-                
-                # Mark the last edge that completes the cycle as inconsistent
-                G.add_edge(cycle[-1], cycle[0], consistency=3.0, is_consistent=False)
-            
-            return transitive_cycles, G
-        
-        return [], G
+        # Add edges with relationship metadata
+        for rel in relationships:
+            entity_a, relation, entity_b, claim_idx = rel
+            G.add_edge(claim_idx, f"{entity_a}-{entity_b}",
+                      relation=relation,
+                      entity_a=entity_a,
+                      entity_b=entity_b,
+                      consistency=7.0 if 'greater' in relation else 3.0)
+
+        # Detect cycles using improved algorithm
+        cycles = self._detect_logical_cycles(G)
+        return cycles, G
     
-    def extract_entities_and_relationships(self, claims: List[str]) -> Tuple[Set[str], List[Tuple[str, str, str, int]]]:
+    def extract_entities_and_relationships(self, claims: List[str]) -> Tuple[Set[str], List[Tuple]]:
         """
         Extract entities and relationships from claims, focusing on comparative relationships.
         
@@ -85,144 +92,113 @@ class GraphAnalyzer:
         entities = set()
         relationships = []
         
-        # Common comparative markers
-        comparative_markers = [
-            # "More than" relationships
-            (r'(\S+(?:\s+\S+){0,5})\s+(?:is|are|was|were)\s+(?:\S+\s+){0,3}(more|greater|higher|bigger|larger|stronger|faster|older|taller|heavier)\s+than\s+(\S+(?:\s+\S+){0,5})', 'greater_than'),
-            
-            # "Less than" relationships
-            (r'(\S+(?:\s+\S+){0,5})\s+(?:is|are|was|were)\s+(?:\S+\s+){0,3}(less|smaller|lower|weaker|slower|younger|shorter|lighter)\s+than\s+(\S+(?:\s+\S+){0,5})', 'less_than'),
-            
-            # Verb + "more than"
-            (r'(\S+(?:\s+\S+){0,5})\s+((?:eat|eats|run|runs|jump|jumps|think|thinks|work|works|play|plays|pay|pays|spend|spends|earn|earns)\s+(?:much\s+)?more)\s+than\s+(\S+(?:\s+\S+){0,5})', 'does_more_than')
-        ]
-        
-        # Process each claim
-        for i, claim in enumerate(claims):
-            for pattern, relation_type in comparative_markers:
-                matches = re.finditer(pattern, claim, re.IGNORECASE)
-                
+        for claim_idx, claim in enumerate(claims):
+            for pattern, rel_type in self.comparison_patterns:
+                matches = re.findall(pattern, claim, re.IGNORECASE)
                 for match in matches:
-                    if relation_type in ['greater_than', 'does_more_than']:
-                        # For "more than" patterns
-                        if len(match.groups()) >= 3:
-                            entity1 = match.group(1).strip().lower()
-                            relation = match.group(2).strip().lower()
-                            entity2 = match.group(3).strip().lower()
-                        else:
-                            entity1 = match.group(1).strip().lower()
-                            relation = "more_than"
-                            entity2 = match.group(3).strip().lower()
-                    elif relation_type == 'less_than':
-                        # For "less than" patterns (reverse the direction for consistency)
-                        entity2 = match.group(1).strip().lower()  # Note the reversal
-                        relation = "more_than"  # Normalize to "more_than"
-                        entity1 = match.group(3).strip().lower()  # Note the reversal
-                    
-                    # Clean up entities (remove trailing punctuation, etc.)
-                    entity1 = re.sub(r'[.,;:!?]$', '', entity1)
-                    entity2 = re.sub(r'[.,;:!?]$', '', entity2)
-                    
-                    # Add to collections
-                    entities.add(entity1)
-                    entities.add(entity2)
-                    relationships.append((entity1, relation, entity2, i))
+                    # Handle different pattern structures
+                    if rel_type == 'equal_to':
+                        a, b = match[0].strip().lower(), match[1].strip().lower()
+                        relationships.append((a, rel_type, b, claim_idx))
+                        entities.update({a, b})
+                    elif rel_type == 'not_as':
+                        a, _, b = match[0].strip().lower(), match[1], match[2].strip().lower()
+                        relationships.append((b, 'greater_than', a, claim_idx))  # Reverse for negation
+                        entities.update({a, b})
+                    else:
+                        if isinstance(match, tuple):
+                            if len(match) >= 3:
+                                a, _, b = match[0].strip().lower(), match[1], match[2].strip().lower()
+                                relationships.append((a, rel_type, b, claim_idx))
+                                entities.update({a, b})
         
         return entities, relationships
     
-    def build_transitive_graph(self, entities: Set[str], relationships: List[Tuple[str, str, str, int]]) -> nx.DiGraph:
+    def _detect_logical_cycles(self, G: nx.DiGraph) -> List[List[int]]:
         """
-        Build a directed graph representing transitive relationships between entities.
+        Improved cycle detection with claim sequence tracking.
         
         Args:
-            entities: Set of entities
-            relationships: List of relationships (entity1, relation, entity2, claim_index)
+            G: Directed graph with claims as nodes
             
         Returns:
-            Directed graph with entities as nodes and relationships as edges
+            List of cycles (each cycle is a list of claim indices)
         """
-        G = nx.DiGraph()
+        cycles = []
+        visited_claims = set()
         
-        # Add nodes for entities
-        for entity in entities:
-            G.add_node(entity)
-        
-        # Add edges for relationships
-        for entity1, relation, entity2, claim_idx in relationships:
-            if relation in ["more_than", "greater_than", "does_more_than"]:
-                # Direction is from "more" to "less"
-                G.add_edge(entity1, entity2, relation=relation, claim_idx=claim_idx)
-        
-        return G
-    
-    def find_transitive_cycles(self, G: nx.DiGraph) -> List[List[int]]:
-        """
-        Find cycles in the transitive relationship graph and convert to claim cycles.
-        
-        Args:
-            G: Directed graph of transitive relationships
-            
-        Returns:
-            List of claim index cycles
-        """
-        # Find all cycles in the graph
         try:
-            entity_cycles = list(nx.simple_cycles(G))
+            for cycle in nx.all_simple_cycles(G):
+                claim_sequence = []
+                for node in cycle:
+                    if isinstance(node, int):  # Filter actual claim nodes
+                        claim_sequence.append(node)
+                
+                # Validate cycle has at least 3 claims and forms a logical loop
+                if len(claim_sequence) >= 3 and self._is_valid_cycle(G, claim_sequence):
+                    cycles.append(claim_sequence)
         except nx.NetworkXNoCycle:
+            # No cycles found
             return []
-        
-        # Convert entity cycles to claim index cycles
-        claim_cycles = []
-        for cycle in entity_cycles:
-            if len(cycle) < 2:
-                continue
-                
-            # Extract claim indices from the cycle
-            claims_in_cycle = []
-            for i in range(len(cycle)):
-                entity1 = cycle[i]
-                entity2 = cycle[(i+1) % len(cycle)]
-                
-                if G.has_edge(entity1, entity2):
-                    claim_idx = G.edges[entity1, entity2].get('claim_idx')
-                    if claim_idx is not None:
-                        claims_in_cycle.append(claim_idx)
-            
-            # Only include cycles with unique claims
-            if len(claims_in_cycle) > 1 and len(set(claims_in_cycle)) == len(claims_in_cycle):
-                claim_cycles.append(claims_in_cycle)
-        
-        return claim_cycles
-    
-    def detect_transitive_inconsistencies(self, claims: List[str]) -> List[List[int]]:
-        """
-        Detect inconsistencies in transitive relationships.
-        This identifies circular chains of comparative relationships that create logical contradictions.
-        
-        Args:
-            claims: List of claims to analyze
-        
-        Returns:
-            List of inconsistency cycles (each cycle is a list of claim indices)
-        """
-        if len(claims) <= 2:
-            return []
-        
-        # Extract entities and relationships
-        entities, relationships = self.extract_entities_and_relationships(claims)
-        if not relationships:
-            return []
-            
-        # Build the transitive graph
-        G = self.build_transitive_graph(entities, relationships)
-        
-        # Find cycles in the transitive graph
-        cycles = self.find_transitive_cycles(G)
-        
-        # Sort cycles by length (longer cycles are usually more significant)
-        cycles.sort(key=len, reverse=True)
         
         return cycles
+    
+    def _is_valid_cycle(self, G: nx.DiGraph, sequence: List[int]) -> bool:
+        """
+        Validate if claim sequence forms a logical inconsistency.
+        
+        Args:
+            G: Directed graph
+            sequence: List of claim indices
+            
+        Returns:
+            True if the sequence forms a valid inconsistency cycle
+        """
+        for i in range(len(sequence)):
+            current = sequence[i]
+            next_claim = sequence[(i+1) % len(sequence)]
+            
+            # Check if there's a logical contradiction between consecutive claims
+            if not self._claims_are_contradictory(G, current, next_claim):
+                return False
+        
+        return True
+    
+    def _claims_are_contradictory(self, G: nx.DiGraph, a: int, b: int) -> bool:
+        """
+        Check if two claims create a contradiction.
+        
+        Args:
+            G: Directed graph
+            a: First claim index
+            b: Second claim index
+            
+        Returns:
+            True if the claims potentially contradict each other
+        """
+        # Safety check for node existence
+        if a not in G.nodes or b not in G.nodes:
+            return False
+            
+        # Get entities from nodes if available, otherwise use empty set
+        a_entities = G.nodes[a].get('entities', set())
+        b_entities = G.nodes[b].get('entities', set())
+        
+        if isinstance(a_entities, list):
+            a_entities = set(a_entities)
+        if isinstance(b_entities, list):
+            b_entities = set(b_entities)
+        
+        # Check for entity overlap and relationship inversion
+        common_entities = a_entities & b_entities
+        if len(common_entities) < 2:
+            return False
+        
+        # Check relationship directions
+        a_relations = [data.get('relation', '') for _, _, data in G.out_edges(a, data=True)]
+        b_relations = [data.get('relation', '') for _, _, data in G.out_edges(b, data=True)]
+        
+        return any(r1 != r2 for r1 in a_relations for r2 in b_relations if r1 and r2)
     
     def compute_global_consistency(self, claims: List[str], cycles: List[List[int]]) -> float:
         """
@@ -258,8 +234,7 @@ class GraphAnalyzer:
         # Round to one decimal place
         return round(consistency_score, 1)
     
-    def visualize_inconsistency_network(self, claims: List[str], cycles: List[List[int]] = None, 
-                                       G: nx.DiGraph = None) -> str:
+    def visualize_inconsistency_network(self, claims: List[str], cycles: List[List[int]] = None, G: nx.DiGraph = None) -> str:
         """
         Create a visualization of the claims and their relationships.
         
@@ -276,160 +251,145 @@ class GraphAnalyzer:
             
         # Create a graph if none provided
         if G is None:
+            # If we don't have a graph, try to create one from the claims and cycles
             G = nx.DiGraph()
+            
             # Add nodes for each claim
             for i, claim in enumerate(claims):
                 G.add_node(i, text=claim)
-            
+                
             # Add edges for cycles
             for cycle in cycles:
                 for i in range(len(cycle)):
                     from_idx = cycle[i]
                     to_idx = cycle[(i+1) % len(cycle)]
                     
-                    # Last edge is inconsistent, others are consistent
+                    # Add edge (last edge is inconsistent)
                     if i == len(cycle) - 1:
                         G.add_edge(from_idx, to_idx, consistency=3.0, is_consistent=False)
                     else:
                         G.add_edge(from_idx, to_idx, consistency=7.0, is_consistent=True)
         
-        # Create visualization
-        plt.figure(figsize=(12, 8))
-        pos = nx.spring_layout(G, seed=42)
+        plt.figure(figsize=(14, 9))
         
-        # Collect edges by type
+        # Use spring layout for node positioning
+        pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
+        
+        # Draw nodes with different colors
+        # Draw claim nodes
+        claim_nodes = [n for n in G.nodes if isinstance(n, int)]
+        if claim_nodes:
+            nx.draw_networkx_nodes(G, pos, 
+                                  nodelist=claim_nodes,
+                                  node_color='lightblue',
+                                  node_size=800,
+                                  label='Claims')
+        
+        # Draw entity nodes
+        entity_nodes = [n for n in G.nodes if not isinstance(n, int)]
+        if entity_nodes:
+            nx.draw_networkx_nodes(G, pos, 
+                                  nodelist=entity_nodes,
+                                  node_color='lightgreen',
+                                  node_size=500,
+                                  label='Entities')
+
+        # Draw edges with different styles
         consistent_edges = []
         inconsistent_edges = []
+        
+        # Collect cycle edges
         cycle_edges = []
+        for cycle in cycles:
+            for i in range(len(cycle)):
+                cycle_edges.append((cycle[i], cycle[(i+1) % len(cycle)]))
         
-        # If cycles are detected, identify cycle edges
-        if cycles:
-            for cycle in cycles:
-                for i in range(len(cycle)):
-                    cycle_edges.append((cycle[i], cycle[(i+1) % len(cycle)]))
-        
-        # Categorize all other edges
+        # Categorize edges
         for u, v, data in G.edges(data=True):
             edge = (u, v)
+            # Prioritize cycle edges
             if edge in cycle_edges:
-                continue  # Skip cycle edges as they'll be drawn separately
-            
-            if data.get('is_consistent', True):
+                inconsistent_edges.append(edge)
+            # Otherwise check consistency data
+            elif data.get('is_consistent', True) or data.get('consistency', 7.0) >= 5.0:
                 consistent_edges.append(edge)
             else:
                 inconsistent_edges.append(edge)
         
-        # Draw nodes
-        nx.draw_networkx_nodes(G, pos, node_size=500, node_color='skyblue')
-        
         # Draw consistent edges in green
         if consistent_edges:
-            nx.draw_networkx_edges(G, pos, edgelist=consistent_edges, width=1.5, 
-                                  edge_color='green', alpha=0.7, arrows=True)
+            nx.draw_networkx_edges(G, pos, 
+                                  edgelist=consistent_edges,
+                                  edge_color='green',
+                                  arrows=True,
+                                  alpha=0.6)
         
-        # Draw inconsistent edges in orange
+        # Draw inconsistent edges in red
         if inconsistent_edges:
-            nx.draw_networkx_edges(G, pos, edgelist=inconsistent_edges, width=1.5, 
-                                  edge_color='orange', alpha=0.7, arrows=True)
+            nx.draw_networkx_edges(G, pos, 
+                                  edgelist=inconsistent_edges,
+                                  edge_color='red',
+                                  arrows=True,
+                                  style='dashed',
+                                  width=2)
+
+        # Add labels - short label for nodes, full text in annotation
+        claim_labels = {}
+        for i, claim in enumerate(claims):
+            if i in G.nodes:  # Only add labels for nodes that exist
+                short_text = f"Claim {i}"
+                claim_labels[i] = short_text
+                
+                # Add full text as annotation
+                plt.annotate(f"{i}: {claim[:50]}...", 
+                           xy=pos[i],
+                           xytext=(0, -20),
+                           textcoords="offset points",
+                           bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.8),
+                           size=8,
+                           ha='center')
         
-        # Draw cycle edges in red with higher prominence
-        if cycle_edges:
-            nx.draw_networkx_edges(G, pos, edgelist=cycle_edges, width=2.5, 
-                                  edge_color='red', arrows=True)
-            status = "INCONSISTENT"
-        else:
-            status = "CONSISTENT"
+        # Add entity labels if they exist
+        entity_labels = {n: n for n in entity_nodes}
         
-        # Add edge labels with consistency scores
-        edge_labels = {}
-        for u, v, data in G.edges(data=True):
-            if 'consistency' in data:
-                edge_labels[(u, v)] = f"{data['consistency']:.1f}/10"
+        # Draw labels
+        if claim_labels:
+            nx.draw_networkx_labels(G, pos, labels=claim_labels, font_size=9)
+        if entity_labels:
+            nx.draw_networkx_labels(G, pos, labels=entity_labels, font_size=8, font_color='darkgreen')
+
+        plt.title("Inconsistency Detection Network", fontsize=14)
+        plt.legend(loc='upper right')
+        plt.axis('off')  # Turn off axis
         
-        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
-        
-        # Draw claim labels
-        labels = {}
-        for node, data in G.nodes(data=True):
-            # Truncate long claims for better display
-            text = data.get('text', f"Claim {node}")
-            labels[node] = text if len(text) < 30 else text[:27] + "..."
-        
-        nx.draw_networkx_labels(G, pos, labels=labels, font_size=10)
-        
-        plt.title(f"Claim Consistency Network ({status})")
-        plt.axis('off')
-        
-        # Add a legend
-        from matplotlib.lines import Line2D
-        legend_elements = [
-            Line2D([0], [0], color='green', lw=2, label='Consistent'),
-            Line2D([0], [0], color='orange', lw=2, label='Inconsistent'),
-            Line2D([0], [0], color='red', lw=2, label='Inconsistency Cycle')
-        ]
-        plt.legend(handles=legend_elements, loc='upper right')
-        
-        # Save to file
+        # Save visualization
         vis_dir = os.environ.get('VISUALIZATION_DIR', './visualizations')
         os.makedirs(vis_dir, exist_ok=True)
-        filename = f"{uuid.uuid4()}.png"
+        filename = f"inconsistency_{uuid.uuid4().hex[:8]}.png"
         filepath = os.path.join(vis_dir, filename)
-        plt.savefig(filepath, bbox_inches='tight')
+        plt.savefig(filepath, dpi=300, bbox_inches='tight')
         plt.close()
         
-        return f"/visualizations/{filename}"
+        # Return path in format expected by detector
+        return f"/visualizations/{os.path.basename(filepath)}"
     
-    def analyze_text(self, text: str) -> Dict[str, Any]:
+    def _extract_claim_entities(self, claim: str) -> Set[str]:
         """
-        Analyze text for logical inconsistencies.
+        Extract entities mentioned in a claim.
         
         Args:
-            text: The text to analyze
+            claim: Claim text to analyze
             
         Returns:
-            Dictionary with analysis results
+            Set of entities mentioned in the claim
         """
-        # Simple sentence segmentation to extract claims
-        claims = []
-        for sentence in re.split(r'[.!?]\s+', text):
-            if sentence.strip():
-                claims.append(sentence.strip() + ".")
-        
-        # Detect inconsistency cycles
-        cycles, G = self.detect_circular_inconsistencies(claims)
-        
-        # Calculate consistency score
-        consistency_score = self.compute_global_consistency(claims, cycles)
-        
-        # Create visualization
-        visualization_path = self.visualize_inconsistency_network(claims, cycles, G)
-        
-        return {
-            'claims': claims,
-            'cycles': cycles,
-            'consistency_score': consistency_score,
-            'visualization_path': visualization_path
-        }
-
-
-# For backward compatibility
-def detect_circular_inconsistencies(claims):
-    """Detect inconsistency cycles in a list of claims."""
-    analyzer = GraphAnalyzer()
-    cycles, _ = analyzer.detect_circular_inconsistencies(claims)
-    return cycles
-
-def compute_global_consistency(claims, cycles):
-    """Compute global consistency score."""
-    analyzer = GraphAnalyzer()
-    return analyzer.compute_global_consistency(claims, cycles)
-
-def visualize_inconsistency_network(claims, cycles=None):
-    """Create visualization of claim consistency network."""
-    analyzer = GraphAnalyzer()
-    return analyzer.visualize_inconsistency_network(claims, cycles)
-
-def analyze_text(text):
-    """Analyze text for logical inconsistencies."""
-    analyzer = GraphAnalyzer()
-    return analyzer.analyze_text(text)
+        entities = set()
+        for pattern, _ in self.comparison_patterns:
+            matches = re.findall(pattern, claim, re.IGNORECASE)
+            for match in matches:
+                if isinstance(match, tuple):
+                    # Add all non-empty string parts of the match
+                    entities.update([m.strip().lower() for m in match if isinstance(m, str) and m.strip()])
+                else:
+                    entities.add(match.strip().lower())
+        return entities
