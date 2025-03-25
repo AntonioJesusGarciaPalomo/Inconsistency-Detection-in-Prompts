@@ -1,9 +1,9 @@
-"""Service for interacting with the Azure OpenAI API."""
-import os
+"""Service for interacting with the Azure OpenAI API with enhanced capabilities."""
 import logging
 import asyncio
 from typing import Dict, Any, List, Optional
 import json
+import re
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.config import settings
@@ -73,11 +73,17 @@ class OpenAIService:
         
         system_prompt = """
         You are an expert at detecting logical inconsistencies between statements.
-        Rate the consistency between the two statements on a scale of 0-10, where:
-        - 0 means completely contradictory
-        - 10 means perfectly consistent
+        Analyze the logical relationship between the two statements and rate their consistency 
+        on a scale of 0-10, where:
+        - 0 means completely contradictory (the statements logically cannot both be true)
+        - 5 means unrelated or neutral (no logical connection)
+        - 10 means completely consistent (the statements logically support or complement each other)
         
-        Return only the numerical score.
+        Important instructions:
+        1. Focus ONLY on logical consistency, not factual truth
+        2. Pay special attention to comparative relationships (greater than, older than, etc.)
+        3. Look for transitive relationship contradictions (A > B > C > A patterns)
+        4. Return ONLY the numerical score as a single number (do not include any explanatory text)
         """
         
         tasks = []
@@ -86,7 +92,7 @@ class OpenAIService:
                 logger.warning(f"Invalid claim pair format: {pair}")
                 continue
                 
-            user_message = f"Statement 1: {pair[0]}\nStatement 2: {pair[1]}\nConsistency score (0-10):"
+            user_message = f"Statement 1: {pair[0]}\nStatement 2: {pair[1]}\n\nConsistency score (0-10):"
             tasks.append(self.get_completion(system_prompt, user_message, temperature))
         
         if not tasks:
@@ -100,13 +106,17 @@ class OpenAIService:
             for result in results:
                 try:
                     # Extract just the number from the response
-                    number_str = ''.join(c for c in result if c.isdigit() or c == '.')
-                    score = float(number_str)
-                    # Ensure the score is in the valid range
-                    score = max(0, min(10, score))
-                    scores.append(score)
-                except ValueError:
-                    logger.warning(f"Could not parse consistency score from '{result}'")
+                    match = re.search(r'\b(\d+(?:\.\d+)?)\b', result)
+                    if match:
+                        score = float(match.group(1))
+                        # Ensure the score is in the valid range
+                        score = max(0, min(10, score))
+                        scores.append(score)
+                    else:
+                        logger.warning(f"Could not extract number from: '{result}'")
+                        scores.append(5.0)  # Default to neutral
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Could not parse consistency score from '{result}': {e}")
                     scores.append(5.0)  # Default to neutral
                     
             return scores
@@ -115,3 +125,99 @@ class OpenAIService:
             logger.error(f"Error in batch evaluation: {str(e)}")
             # Return neutral scores as fallback
             return [5.0] * len(tasks)
+
+    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=5))
+    async def analyze_logical_consistency(self, text: str) -> Dict[str, Any]:
+        """
+        Analyze a text for logical consistency in a single call.
+        This is a more efficient approach than multiple separate calls.
+        
+        Args:
+            text: The text to analyze
+            
+        Returns:
+            Dictionary with analysis results
+        """
+        system_message = """
+        Analyze the following text for logical consistency. Follow these steps:
+        
+        1. Identify individual claims in the text
+        2. Detect any logical inconsistencies or contradictions between claims
+        3. Look for circular relationships or transitive inconsistencies
+        
+        Return your analysis as a valid JSON object with these fields:
+        {
+          "claims": [list of individual claims extracted from the text],
+          "inconsistencies_detected": true/false,
+          "inconsistency_description": "Description of any inconsistencies found",
+          "inconsistent_claim_indices": [[0,1,2], [3,4]], // Arrays of claim indices that form inconsistent cycles
+          "consistency_score": 0-10 // Overall consistency score (0 = inconsistent, 10 = consistent)
+        }
+        
+        IMPORTANT: Make sure to return only a valid JSON object without any additional text, markdown formatting, or code block markers.
+        """
+        
+        try:
+            response = await self.get_completion(
+                system_message=system_message,
+                user_message=text,
+                max_tokens=2500
+            )
+            
+            try:
+                # Clean up the response to handle Markdown formatting
+                cleaned_response = response
+                
+                # Remove Markdown JSON code blocks if present
+                if "```json" in cleaned_response:
+                    cleaned_response = cleaned_response.replace("```json", "").replace("```", "")
+                elif "```" in cleaned_response:
+                    cleaned_response = cleaned_response.replace("```", "")
+                
+                # Fix common JSON formatting issues
+                # Remove any trailing commas before closing brackets
+                cleaned_response = re.sub(r',\s*}', '}', cleaned_response)
+                cleaned_response = re.sub(r',\s*]', ']', cleaned_response)
+                
+                # Remove duplicate keys (keeping the last one)
+                # This is a simplistic approach - for production, consider a more robust solution
+                parsed_json = json.loads(cleaned_response)
+                return parsed_json
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {response}")
+                logger.error(f"JSON parse error: {str(e)}")
+                
+                # Try one more approach - use regex to extract key parts
+                try:
+                    # Extract consistency score
+                    score_match = re.search(r'"consistency_score":\s*(\d+(?:\.\d+)?)', response)
+                    consistency_score = float(score_match.group(1)) if score_match else 5.0
+                    
+                    # Extract inconsistency detected
+                    inconsistency_match = re.search(r'"inconsistencies_detected":\s*(true|false)', response, re.IGNORECASE)
+                    inconsistencies_detected = inconsistency_match.group(1).lower() == "true" if inconsistency_match else False
+                    
+                    return {
+                        "claims": [],
+                        "inconsistencies_detected": inconsistencies_detected,
+                        "consistency_score": consistency_score,
+                        "inconsistency_description": "Extracted from malformed JSON"
+                    }
+                except Exception:
+                    # Last resort fallback
+                    return {
+                        "claims": [],
+                        "inconsistencies_detected": False,
+                        "consistency_score": 5.0,
+                        "error": "Failed to parse analysis"
+                    }
+                
+        except Exception as e:
+            logger.error(f"Error in logical consistency analysis: {str(e)}")
+            return {
+                "claims": [],
+                "inconsistencies_detected": False,
+                "consistency_score": 5.0,
+                "error": str(e)
+            }
