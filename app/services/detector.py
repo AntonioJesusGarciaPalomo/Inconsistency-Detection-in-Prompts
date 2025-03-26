@@ -78,42 +78,34 @@ class InconsistencyDetector:
             
         # Use a modified prompt specifically designed to identify the full transitive chain
         system_message = """
-        You are an inconsistency detection expert. Your task is to analyze comparative statements and find logical inconsistencies.
+        You are an inconsistency detection expert. Analyze the claims and find logical inconsistencies.
+    
+        Pay SPECIAL ATTENTION to direct contradictions such as:
+        - "I like X" vs "I don't like X"
+        - "X is good" vs "X is bad"
+        - "X is delicious" vs "I don't like X"
         
-        Focus especially on transitive relationships and circular inconsistencies. For example, if:
-        - A > B
-        - B > C
-        - C > A
-        
-        This is a circular inconsistency because it's impossible for A > B > C > A.
-        
-        For the particular case of comparative statements like "X eats more than Y" across multiple claims, 
-        carefully trace the COMPLETE chain through ALL statements to identify any circular inconsistencies.
+        These are obvious contradictions that you must identify.
         
         Your response MUST be ONLY a JSON object with these fields:
         {
-          "inconsistencies_detected": true/false,
-          "consistency_score": 0-10,
-          "inconsistency_description": "Description of inconsistencies",
-          "inconsistent_claim_indices": [[0,1,2,3,4,5]]
+        "inconsistencies_detected": true/false,
+        "consistency_score": 0-10,
+        "inconsistency_description": "Description of inconsistencies",
+        "inconsistent_claim_indices": [[i,j]]
         }
         
-        If there's a circular inconsistency involving ALL or MOST of the claims in a chain, 
-        make sure to include ALL indices in the inconsistent_claim_indices array.
-        
-        DO NOT include any explanation. ONLY RETURN THE RAW JSON OBJECT.
+        If you find a direct contradiction between claims i and j, include [i,j] in inconsistent_claim_indices.
         """
-        
-        # Create a more explicit message pointing out the need to check the full chain
+
         claims_text = "\n".join([f"{i}. {claim}" for i, claim in enumerate(claims)])
         user_message = f"""
-        Analyze these claims for logical inconsistencies. 
-        
-        Pay special attention to transitive relationships that might form a complete chain or cycle involving ALL claims:
+        Analyze these claims for logical inconsistencies, especially DIRECT CONTRADICTIONS:
         
         {claims_text}
         
-        Remember to check for a full chain or cycle that might include ALL the claims together.
+        Remember that statements like "I don't like X" and "X is the most delicious thing for me" 
+        are obviously contradictory and must be identified as inconsistent.
         """
         
         try:
