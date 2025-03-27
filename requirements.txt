@@ -15,3 +15,4 @@ tenacity==8.2.3
 httpx==0.24.1  # Required for async requests
 pytest==7.4.0  # For testing
 pytest-asyncio==0.21.1  # For async tests
+pyvis==0.3.1  # For interactive network visualizations

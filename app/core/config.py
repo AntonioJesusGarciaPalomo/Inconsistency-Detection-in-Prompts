@@ -5,7 +5,7 @@ from pydantic import BaseModel, validator
 
 class Settings(BaseModel):
     """Application settings."""
-    api_host: str = os.environ.get("API_HOST", "0.0.0.0")
+    api_host: str = os.environ.get("API_HOST", "localhost")
     api_port: int = int(os.environ.get("API_PORT", "8000"))
     api_workers: int = int(os.environ.get("API_WORKERS", "1"))
     debug: bool = os.environ.get("DEBUG", "False").lower() in ("true", "1", "t")

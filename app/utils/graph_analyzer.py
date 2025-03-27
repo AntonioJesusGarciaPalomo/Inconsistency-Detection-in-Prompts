@@ -6,6 +6,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import os
 import uuid
+import textwrap
 
 logger = logging.getLogger(__name__)
 
@@ -49,15 +50,15 @@ class GraphAnalyzer:
                                 is_consistent=False,
                                 is_cycle_edge=True)
         
-        plt.figure(figsize=(14, 10))
+        plt.figure(figsize=(18, 14))
         
-        # Use spring layout for node positioning
-        pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
+        # Use spring layout for node positioning with more space between nodes
+        pos = nx.spring_layout(G, k=0.7, iterations=50, seed=42)
         
-        # Draw nodes
+        # Draw nodes 
         nx.draw_networkx_nodes(G, pos, 
                              node_color='skyblue',
-                             node_size=1000,
+                             node_size=2500,
                              alpha=0.8)
         
         # Gather all cycle edges
@@ -115,16 +116,27 @@ class GraphAnalyzer:
         
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8)
         
-        
-        # Add node labels
+        # Add node labels with claim text (truncated if too long)
         node_labels = {}
         for node in G.nodes():
             if isinstance(node, int) and 0 <= node < len(claims):
-                node_labels[node] = f"{node}"
+                # Wrap claim text to fit in nodes
+                claim_text = claims[node]
+                if len(claim_text) > 40:
+                    # Truncate and wrap text for better display
+                    wrapped_text = textwrap.fill(claim_text[:60] + "...", width=20)
+                else:
+                    wrapped_text = textwrap.fill(claim_text, width=20)
+                
+                # Format as "node_index: claim_text"
+                node_labels[node] = f"{node}: {wrapped_text}"
             else:
                 node_labels[node] = str(node)
         
-        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=10)
+        # Draw labels with smaller font size to fit more text
+        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=9, font_weight='bold', 
+                               font_family='sans-serif', bbox=dict(facecolor='white', alpha=0.7, 
+                               boxstyle='round,pad=0.5', edgecolor='gray'))
         
         # Add title
         if cycles:
@@ -143,10 +155,11 @@ class GraphAnalyzer:
         # Turn off axis
         plt.axis('off')
         
-        # Add text for claims
+        # Add the full text of each claim in a sidebar
+        # We're now displaying claims in the nodes, so this is supplementary
         y_pos = -0.05
         for i, claim in enumerate(claims):
-            plt.figtext(0.05, y_pos, f"{i}. {claim}", fontsize=9, 
+            plt.figtext(0.02, y_pos, f"{i}. {claim}", fontsize=8, 
                      bbox=dict(facecolor='white', alpha=0.8))
             y_pos -= 0.05
         

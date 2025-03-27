@@ -1,11 +1,15 @@
 """Pydantic schemas for the API requests and responses."""
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 
 class AnalyzePromptRequest(BaseModel):
     """Request schema for prompt analysis."""
     prompt: str = Field(..., description="The text prompt to analyze for inconsistencies")
     visualization: bool = Field(False, description="Whether to generate a visualization")
+    visualization_type: Literal["static", "interactive"] = Field(
+        "static", 
+        description="Type of visualization to generate ('static' or 'interactive')"
+    )
 
 # For backwards compatibility
 PromptAnalysisRequest = AnalyzePromptRequest
@@ -22,6 +26,10 @@ class AnalyzePromptResponse(BaseModel):
     cycles: List[List[int]] = Field(..., description="List of detected inconsistency cycles")
     inconsistent_pairs: List[CycleDescription] = Field(..., description="Descriptions of inconsistent cycles")
     visualization_url: Optional[str] = Field(None, description="URL to the generated visualization")
+    visualization_type: Optional[Literal["static", "interactive"]] = Field(
+        None, 
+        description="Type of the generated visualization"
+    )
     error: Optional[str] = Field(None, description="Error message if analysis failed")
 
 # For backwards compatibility
