@@ -9,7 +9,7 @@ The API analyzes text prompts to:
 1. Extract individual claims using language model capabilities
 2. Assess logical relationships and consistency between claims
 3. Detect circular inconsistencies and contradictory patterns
-4. Generate visualizations of claim relationships with consistency scores
+4. Generate static or interactive visualizations of claim relationships
 
 Based on the research paper: "Prospects for inconsistency detection using large language models and sheaves" by Steve Huntsman, Michael Robinson, and Ludmilla Huntsman.
 
@@ -17,8 +17,9 @@ Based on the research paper: "Prospects for inconsistency detection using large 
 
 - **LLM-Driven Analysis**: Uses GPT models to understand semantic relationships without relying on rigid pattern matching
 - **Comprehensive Consistency Evaluation**: Evaluates both direct and transitive inconsistencies
-- **Interactive Visualizations**: Generates color-coded graphs showing relationships and inconsistency cycles
-- **Detailed Scoring**: Provides numerical consistency scores for all claim pairs
+- **Multiple Visualization Options**: Generates both static and interactive visualizations of inconsistency networks
+- **Detailed Scoring**: Provides numerical consistency scores for relationships between claims
+- **Pattern Detection**: Uses linguistic pattern analysis to detect comparative and transitive relationships
 
 ## Project Structure
 
@@ -39,7 +40,8 @@ inconsistency-detector/
 │   │   └── detector.py       # Inconsistency detection logic
 │   └── utils/
 │       ├── __init__.py
-│       └── sheaf.py          # Graph analysis utilities
+│       ├── graph_analyzer.py           # Static visualization generator
+│       └── interactive_graph_analyzer.py # Interactive visualization generator
 ├── tests/
 │   ├── __init__.py
 │   ├── test_api.py
@@ -74,6 +76,8 @@ inconsistency-detector/
    pip install -r requirements.txt
    ```
 
+   This includes PyVis for interactive network visualizations.
+
 4. **Configure environment variables**
 
    Copy the example environment file and update with your credentials:
@@ -103,56 +107,132 @@ inconsistency-detector/
    uvicorn main:app --reload
    ```
 
+   The API will be available at `http://localhost:8000`.
+
 ## API Usage
 
 ### Analyze Prompt Endpoint
 
 **POST** `/api/analyze`
 
-Request body:
+#### Request Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| prompt | string | The text prompt to analyze for inconsistencies |
+| visualization | boolean | Whether to generate a visualization (default: false) |
+| visualization_type | string | Type of visualization to generate ('static' or 'interactive', default: 'static') |
+
+#### Example Request
 
 ```json
 {
-    "prompt": "Your text prompt to analyze for inconsistencies",
-    "visualization": true
+    "prompt": "I like chocolate and I don't like sugar and sugar is the most delicious thing for me",
+    "visualization": true,
+    "visualization_type": "interactive"
 }
 ```
 
-Response:
+#### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| consistency_score | float | Overall consistency rating from 0-10 (0=inconsistent, 10=consistent) |
+| claims | array | List of individual claims extracted from the prompt |
+| cycles | array | Lists of claim indices that form inconsistency cycles |
+| inconsistent_pairs | array | Detailed descriptions of detected inconsistencies |
+| visualization_url | string | URL to the generated visualization |
+| visualization_type | string | Type of visualization generated ('static' or 'interactive') |
+| error | string | Error message (null if no error occurred) |
+
+#### Example Response
 
 ```json
 {
-    "consistency_score": 4.5,
+    "consistency_score": 4.0,
     "claims": [
-        "Claim 1 extracted from the prompt",
-        "Claim 2 extracted from the prompt"
+        "I like chocolate.",
+        "I don't like sugar.",
+        "Sugar is the most delicious thing for me."
     ],
-    "cycles": [
-        [0, 1, 2]
-    ],
+    "cycles": [[1, 2]],
     "inconsistent_pairs": [
         {
-            "cycle": [0, 1, 2],
-            "description": "Claim 1 → Claim 2 → Claim 3 → Claim 1"
+            "cycle": [1, 2],
+            "description": "I don't like sugar. → Sugar is the most delicious thing for me. → I don't like sugar."
         }
     ],
-    "pairwise_consistency": {
-        "0-1": 8.5,
-        "0-2": 3.2,
-        "1-2": 7.0
-    },
-    "visualization_url": "http://localhost:8000/visualizations/12345.png"
+    "visualization_url": "http://localhost:8000/visualizations/inconsistency_8643dc23.html",
+    "visualization_type": "interactive",
+    "error": null
 }
 ```
 
-### Response Fields
+### Visualization Endpoint
 
-- **consistency_score**: Overall consistency rating from 0-10 (0=inconsistent, 10=consistent)
-- **claims**: List of individual claims extracted from the prompt
-- **cycles**: Lists of claim indices that form inconsistency cycles
-- **inconsistent_pairs**: Detailed descriptions of detected inconsistencies
-- **pairwise_consistency**: Consistency scores for each analyzed claim pair
-- **visualization_url**: Complete URL to the generated visualization image
+**GET** `/visualizations/{filename}`
+
+Returns the visualization file (PNG or HTML) for the given filename.
+
+## Visualization Types
+
+The API supports two types of visualizations:
+
+### 1. Static Visualizations (PNG)
+
+- Generated using Matplotlib and NetworkX
+- Shows claims as nodes with text labels
+- Green edges represent consistent relationships
+- Red dashed edges represent inconsistent relationships
+- Edge labels show consistency scores
+
+Example request:
+```bash
+curl -X POST http://localhost:8000/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "I like chocolate and I don't like sugar and sugar is the most delicious thing for me",
+    "visualization": true,
+    "visualization_type": "static"
+  }'
+```
+
+### 2. Interactive Visualizations (HTML)
+
+- Generated using PyVis (based on vis.js)
+- Allows dragging, zooming, and interactive exploration of the graph
+- Hovering over nodes shows the full text of claims
+- Green edges represent consistent relationships
+- Red dashed edges represent inconsistent relationships
+- All relationships are undirected (no arrows)
+- Includes a detailed explanation of detected inconsistency cycles
+- Contains a full listing of all claims for reference
+
+Example request:
+```bash
+curl -X POST http://localhost:8000/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "I like chocolate and I don't like sugar and sugar is the most delicious thing for me",
+    "visualization": true,
+    "visualization_type": "interactive"
+  }'
+```
+
+## Inconsistency Detection Process
+
+The API follows these steps to detect inconsistencies:
+
+1. **Claim Extraction**: Uses LLM to extract individual claims from the prompt
+2. **Consistency Analysis**: Evaluates logical relationships between claims
+3. **Cycle Detection**: Identifies circular inconsistencies in the relationship network
+4. **Visualization**: Generates a visual representation of the claim network
+
+The system employs multiple strategies for detecting inconsistencies:
+
+- **Direct LLM Analysis**: Primary method using language model to evaluate logical consistency
+- **Pattern Detection**: Identifies comparative patterns in claims (e.g., "more than", "better than")
+- **Graph Analysis**: Uses network analysis to detect cycles in the relationship graph
 
 ## Examples
 
@@ -163,7 +243,8 @@ curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "I am older than you and you are older than me",
-    "visualization": true
+    "visualization": true,
+    "visualization_type": "interactive"
   }'
 ```
 
@@ -174,25 +255,44 @@ curl -X POST http://localhost:8000/api/analyze \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "I have a question: if I eat more than my little dog, but my little dog eats more than Ana'\''s, Ana'\''s eats more than Juan'\''s, Juan'\''s eats more than Miguel'\''s, and Miguel'\''s little dog eats more than Miguel himself. If we know for sure that Miguel eats much more than I do, who eats the most?",
-    "visualization": true
+    "visualization": true,
+    "visualization_type": "interactive"
   }'
 ```
 
-## Visualization Features
+### Preference Contradiction Example
 
-The API generates interactive visualizations showing:
+```bash
+curl -X POST http://localhost:8000/api/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "I like chocolate and I like sweets and I don'\''t like sugar and sugar is the most delicious thing for me",
+    "visualization": true,
+    "visualization_type": "interactive"
+  }'
+```
 
-- **Green edges**: Consistent relationships (score ≥ 5/10)
-- **Orange edges**: Inconsistent relationships (score < 5/10)
-- **Red edges**: Inconsistency cycle edges
-- **Edge labels**: Numerical consistency scores (e.g., "7.5/10")
+## Working with Visualizations
+
+After receiving the API response, you can view the visualization by:
+
+1. Opening the URL provided in the `visualization_url` field in your web browser
+2. For interactive visualizations, you can:
+   - Drag nodes to rearrange the graph
+   - Zoom in/out using the mouse wheel
+   - Hover over nodes to see the full text of claims
+   - Double-click on a node to focus on its connections
+
+NOTE: If the URL in the response contains `0.0.0.0`, replace it with `localhost` to access the visualization.
 
 ## Implementation Details
 
-- **Language Model Integration**: Uses GPT-4o mini or similar models to evaluate logical consistency
-- **Advanced JSON Parsing**: Robust handling of LLM responses with error correction
+- **Language Model Integration**: Uses GPT models to evaluate logical consistency
+- **Advanced JSON Parsing**: Robust handling of LLM responses with multi-stage parsing and error correction
 - **Graph-Based Analysis**: Uses NetworkX for graph construction and cycle detection
-- **Matplotlib Visualizations**: Generates clear, informative visualizations of claim relationships
+- **Visualization**: 
+  - Static: Uses Matplotlib for generating PNG visualizations
+  - Interactive: Uses PyVis for generating interactive HTML visualizations
 
 ## License
 

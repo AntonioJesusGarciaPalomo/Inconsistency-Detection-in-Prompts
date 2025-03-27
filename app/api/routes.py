@@ -16,8 +16,11 @@ logger = logging.getLogger(__name__)
 
 # Initialize services
 openai_service = OpenAIService()
-# Use the configured API_HOST or server URL from environment variables
-base_url = f"http://{settings.api_host}:{settings.api_port}" if settings.api_host else "http://localhost:8000"
+
+# Siempre usa "localhost" en lugar de API_HOST para URLs accesibles desde el navegador
+port = settings.api_port
+base_url = f"http://localhost:{port}"
+
 detector = InconsistencyDetector(openai_service, base_url=base_url)
 
 @router.get("/health")
@@ -41,16 +44,22 @@ async def analyze_prompt(
         Analysis results
     """
     try:
-        # La clave aquí es pasar el visualization_type desde la solicitud
+        # Usa los valores de la solicitud
         result = await detector.analyze_prompt(
             prompt=request.prompt,
             generate_visualization=request.visualization,
-            visualization_type=request.visualization_type  # Aseguramos que se pasa este parámetro
+            visualization_type=request.visualization_type
         )
         
-        # Añadimos el tipo de visualización a la respuesta
+        # Añade el tipo de visualización a la respuesta
         if request.visualization and "visualization_url" in result and result["visualization_url"]:
             result["visualization_type"] = request.visualization_type
+            
+            # Asegúrate de que la URL use "localhost" en lugar de cualquier otra dirección
+            if "visualization_url" in result and result["visualization_url"]:
+                url = result["visualization_url"]
+                if "0.0.0.0" in url:
+                    result["visualization_url"] = url.replace("0.0.0.0", "localhost")
         
         # Add cleanup of old visualizations as a background task
         background_tasks.add_task(cleanup_old_visualizations)

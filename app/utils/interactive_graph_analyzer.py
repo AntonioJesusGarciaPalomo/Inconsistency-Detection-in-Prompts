@@ -5,7 +5,7 @@ import logging
 import networkx as nx
 import os
 import uuid
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any, Set
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +68,12 @@ class InteractiveGraphAnalyzer:
                                     is_consistent=False,
                                     is_cycle_edge=True)
             
-            # Create a Pyvis network
-            net = Network(height=self.height, width=self.width, bgcolor=self.bgcolor, 
-                        font_color=self.font_color, directed=True, notebook=False)
+            # Create a new undirected graph for visualization
+            undirected_G = nx.Graph()
             
-            # Configure physics for better node separation
-            net.barnes_hut(spring_length=200, spring_strength=0.05, damping=0.09)
+            # Add all nodes
+            for node, attrs in G.nodes(data=True):
+                undirected_G.add_node(node, **attrs)
             
             # Gather all cycle edges
             cycle_edges = set()
@@ -82,10 +82,44 @@ class InteractiveGraphAnalyzer:
                     idx1 = cycle[i]
                     idx2 = cycle[(i + 1) % len(cycle)]
                     cycle_edges.add((idx1, idx2))
+                    cycle_edges.add((idx2, idx1))  # Add both directions
+            
+            # Process the edges - only add each pair once but keep track of edge attributes
+            processed_pairs = set()
+            
+            for u, v, data in G.edges(data=True):
+                # Create a canonical representation of the edge (smaller index first)
+                edge_pair = tuple(sorted([u, v]))
+                
+                # Skip if we've already processed this pair
+                if edge_pair in processed_pairs:
+                    continue
+                
+                # Check if this edge is part of a cycle
+                is_cycle_edge = (u, v) in cycle_edges or (v, u) in cycle_edges
+                
+                # Check consistency
+                is_consistent = data.get('is_consistent', True) and not is_cycle_edge
+                
+                # Add the edge with appropriate attributes
+                undirected_G.add_edge(u, v, 
+                                     is_consistent=is_consistent,
+                                     is_cycle_edge=is_cycle_edge,
+                                     consistency=data.get('consistency', 8.0 if is_consistent else 2.0))
+                
+                # Mark as processed
+                processed_pairs.add(edge_pair)
+            
+            # Create a Pyvis network
+            net = Network(height=self.height, width=self.width, bgcolor=self.bgcolor, 
+                        font_color=self.font_color, directed=False, notebook=False)
+            
+            # Configure physics for better node separation
+            net.barnes_hut(spring_length=200, spring_strength=0.05, damping=0.09)
             
             # Add nodes to the network
-            for node_id in G.nodes():
-                node_attrs = G.nodes[node_id]
+            for node_id in undirected_G.nodes():
+                node_attrs = undirected_G.nodes[node_id]
                 
                 # Get claim text if available
                 if isinstance(node_id, int) and 0 <= node_id < len(claims):
@@ -118,31 +152,31 @@ class InteractiveGraphAnalyzer:
                     )
             
             # Add edges to the network
-            for u, v, data in G.edges(data=True):
-                # Check if this edge is in a cycle or marked as inconsistent
-                in_cycle = (u, v) in cycle_edges
-                is_inconsistent = not data.get('is_consistent', True) or data.get('is_cycle_edge', False)
+            for u, v, data in undirected_G.edges(data=True):
+                # Determine if this is a cycle edge
+                is_cycle_edge = data.get('is_cycle_edge', False)
+                is_consistent = data.get('is_consistent', True)
                 
-                edge_color = "red" if in_cycle or is_inconsistent else "green"
-                edge_style = "dashed" if in_cycle or is_inconsistent else "solid"
+                edge_color = "red" if is_cycle_edge or not is_consistent else "green"
+                edge_style = "dashed" if is_cycle_edge or not is_consistent else "solid"
                 
                 # Create label with consistency score if available
                 if 'consistency' in data:
                     label = f"{data['consistency']:.1f}"
-                    if in_cycle:
+                    if is_cycle_edge:
                         label += "†"  # Add a symbol to mark cycle edges
                 else:
-                    label = "†" if in_cycle else ""
+                    label = "†" if is_cycle_edge else ""
                 
-                # Add edge with appropriate styling
+                # Add edge with appropriate styling - no arrows for any edge
                 net.add_edge(
                     source=u,
                     to=v,
                     color=edge_color,
                     label=label,
-                    width=2.0 if in_cycle or is_inconsistent else 1.5,
+                    width=2.0 if is_cycle_edge or not is_consistent else 1.5,
                     dashes=True if edge_style == "dashed" else False,
-                    arrows="to"  # Show direction of the edge
+                    arrows=""  # No arrows for any edge
                 )
             
             # Add custom HTML header to include explanation and title
@@ -156,12 +190,12 @@ class InteractiveGraphAnalyzer:
                 <div style="margin: 10px 0;">
                     <span style="color: green; font-weight: bold; margin-right: 20px;">
                         <span style="border-bottom: 2px solid green; padding-bottom: 2px;">
-                            — Consistent Relationship
+                            — Consistency Relationship
                         </span>
                     </span>
                     <span style="color: red; font-weight: bold;">
                         <span style="border-bottom: 2px dashed red; padding-bottom: 2px;">
-                            - - - Inconsistent Relationship
+                            - - - Inconsistency Relationship
                         </span>
                     </span>
                 </div>
@@ -302,7 +336,7 @@ class InteractiveGraphAnalyzer:
             nx.draw_networkx_edges(G, pos, 
                                   edgelist=green_edges,
                                   edge_color='green',
-                                  arrows=True,
+                                  arrows=False,  # No arrows
                                   width=1.5)
         
         # Draw inconsistent edges in red
@@ -310,7 +344,7 @@ class InteractiveGraphAnalyzer:
             nx.draw_networkx_edges(G, pos, 
                                   edgelist=red_edges,
                                   edge_color='red',
-                                  arrows=True,
+                                  arrows=False,  # No arrows
                                   width=2,
                                   style='dashed')
         
